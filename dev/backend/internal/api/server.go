@@ -7,26 +7,33 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"ai-knowledge-hub/document"
+	"ai-knowledge-hub/internal/llm"
 	"ai-knowledge-hub/internal/storage"
 )
 
-const maxRequestBodySize = 1 << 20
+const (
+	maxRequestBodySize = 1 << 20
+	maxQuestionLength  = 8_000
+)
 
 type Server struct {
-	store storage.Store
+	store     storage.Store
+	generator llm.Generator
 }
 
-func NewServer(store storage.Store) *Server {
-	return &Server{store: store}
+func NewServer(store storage.Store, generator llm.Generator) *Server {
+	return &Server{store: store, generator: generator}
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.healthHandler)
 	mux.HandleFunc("/documents", s.documentsHandler)
+	mux.HandleFunc("/chat", s.chatHandler)
 	return mux
 }
 
@@ -79,15 +86,7 @@ func (s *Server) createDocument(w http.ResponseWriter, r *http.Request) {
 		Content string `json:"content"`
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		writeError(w, http.StatusBadRequest, "body must contain one JSON object")
+	if !decodeJSONBody(w, r, &input) {
 		return
 	}
 
@@ -103,6 +102,53 @@ func (s *Server) createDocument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, doc)
+}
+
+func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var input struct {
+		Question string `json:"question"`
+	}
+	if !decodeJSONBody(w, r, &input) {
+		return
+	}
+	if strings.TrimSpace(input.Question) == "" {
+		writeError(w, http.StatusBadRequest, "question cannot be empty")
+		return
+	}
+	if len(input.Question) > maxQuestionLength {
+		writeError(w, http.StatusBadRequest, "question is too long")
+		return
+	}
+
+	answer, err := s.generator.Generate(r.Context(), input.Question)
+	if err != nil {
+		slog.Error("generate chat answer", "error", err)
+		writeError(w, http.StatusBadGateway, "language model unavailable")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"answer": answer})
+}
+
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, destination any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "body must contain one JSON object")
+		return false
+	}
+	return true
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {

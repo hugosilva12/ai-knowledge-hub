@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,11 +12,23 @@ import (
 	"testing"
 
 	"ai-knowledge-hub/document"
+	"ai-knowledge-hub/internal/llm"
 	"ai-knowledge-hub/internal/storage"
 )
 
+type fakeGenerator struct {
+	answer string
+	err    error
+	prompt string
+}
+
+func (g *fakeGenerator) Generate(_ context.Context, prompt string) (string, error) {
+	g.prompt = prompt
+	return g.answer, g.err
+}
+
 func newTestHandler() http.Handler {
-	return NewServer(storage.NewMemoryStore()).Handler()
+	return NewServer(storage.NewMemoryStore(), &fakeGenerator{answer: "test answer"}).Handler()
 }
 
 func TestHealth(t *testing.T) {
@@ -118,3 +132,49 @@ func TestConcurrentDocumentCreationUsesUniqueIDs(t *testing.T) {
 		ids[doc.ID] = struct{}{}
 	}
 }
+
+func TestChat(t *testing.T) {
+	generator := &fakeGenerator{answer: "Go uses goroutines for concurrency."}
+	handler := NewServer(storage.NewMemoryStore(), generator).Handler()
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/chat", strings.NewReader(`{"question":"How does Go handle concurrency?"}`))
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if generator.prompt != "How does Go handle concurrency?" {
+		t.Fatalf("prompt = %q", generator.prompt)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body["answer"] != generator.answer {
+		t.Fatalf("answer = %q, want %q", body["answer"], generator.answer)
+	}
+}
+
+func TestChatValidation(t *testing.T) {
+	handler := newTestHandler()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/chat", strings.NewReader(`{"question":"  "}`)))
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+}
+
+func TestChatReportsGeneratorFailure(t *testing.T) {
+	generator := &fakeGenerator{err: errors.New("Ollama is offline")}
+	handler := NewServer(storage.NewMemoryStore(), generator).Handler()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/chat", strings.NewReader(`{"question":"What is Go?"}`)))
+
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadGateway)
+	}
+}
+
+var _ llm.Generator = (*fakeGenerator)(nil)

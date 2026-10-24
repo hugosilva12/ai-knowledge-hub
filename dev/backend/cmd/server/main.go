@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ai-knowledge-hub/internal/api"
+	"ai-knowledge-hub/internal/llm/ollama"
 	"ai-knowledge-hub/internal/storage/postgres"
 )
 
@@ -26,12 +27,25 @@ func main() {
 	}
 	defer store.Close()
 
+	ollamaModel := os.Getenv("OLLAMA_MODEL")
+	if ollamaModel == "" {
+		log.Fatal("OLLAMA_MODEL is required")
+	}
+	ollamaURL := os.Getenv("OLLAMA_URL")
+	if ollamaURL == "" {
+		ollamaURL = "http://localhost:11434"
+	}
+	generator, err := ollama.New(ollamaURL, ollamaModel, nil)
+	if err != nil {
+		log.Fatalf("Ollama configuration failed: %v", err)
+	}
+
 	server := &http.Server{
 		Addr:              ":8081",
-		Handler:           api.NewServer(store).Handler(),
+		Handler:           api.NewServer(store, generator).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      2 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
 

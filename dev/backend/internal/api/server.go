@@ -1,29 +1,26 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
-	"strconv"
-	"sync"
+	"time"
 
 	"ai-knowledge-hub/document"
+	"ai-knowledge-hub/internal/storage"
 )
 
 const maxRequestBodySize = 1 << 20
 
 type Server struct {
-	documentsMu sync.RWMutex
-	documents   []document.Document
-	nextID      uint64
+	store storage.Store
 }
 
-func NewServer() *Server {
-	return &Server{
-		documents: make([]document.Document, 0),
-		nextID:    1,
-	}
+func NewServer(store storage.Store) *Server {
+	return &Server{store: store}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -40,6 +37,14 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := s.store.Ping(ctx); err != nil {
+		slog.Error("health check failed", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "service unavailable")
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.WriteString(w, "ok\n")
@@ -48,7 +53,7 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) documentsHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		s.listDocuments(w)
+		s.listDocuments(w, r)
 	case http.MethodPost:
 		s.createDocument(w, r)
 	default:
@@ -57,11 +62,13 @@ func (s *Server) documentsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) listDocuments(w http.ResponseWriter) {
-	s.documentsMu.RLock()
-	documents := make([]document.Document, len(s.documents))
-	copy(documents, s.documents)
-	s.documentsMu.RUnlock()
+func (s *Server) listDocuments(w http.ResponseWriter, r *http.Request) {
+	documents, err := s.store.ListDocuments(r.Context())
+	if err != nil {
+		slog.Error("list documents", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 
 	writeJSON(w, http.StatusOK, documents)
 }
@@ -84,17 +91,14 @@ func (s *Server) createDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.documentsMu.Lock()
-	id := strconv.FormatUint(s.nextID, 10)
-	doc, err := document.NewDocument(id, input.Title, input.Content)
-	if err == nil {
-		s.nextID++
-		s.documents = append(s.documents, doc)
-	}
-	s.documentsMu.Unlock()
-
+	doc, err := s.store.CreateDocument(r.Context(), input.Title, input.Content)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		if errors.Is(err, document.ErrEmptyTitle) || errors.Is(err, document.ErrEmptyContent) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		slog.Error("create document", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 

@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: knowledge_hub
+      POSTGRES_USER: knowledge
+      POSTGRES_PASSWORD: knowledge
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./dev/backend/migrations/000001_create_documents.up.sql:/docker-entrypoint-initdb.d/000001_create_documents.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U knowledge -d knowledge_hub"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:

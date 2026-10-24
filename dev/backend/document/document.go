@@ -1,6 +1,15 @@
 package document
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
+
+var (
+	ErrEmptyID      = errors.New("id cannot be empty")
+	ErrEmptyTitle   = errors.New("title cannot be empty")
+	ErrEmptyContent = errors.New("content cannot be empty")
+)
 
 type Document struct {
 	ID      string `json:"id"`
@@ -9,8 +18,14 @@ type Document struct {
 }
 
 func NewDocument(id, title, content string) (Document, error) {
-	if content == "" {
-		return Document{}, errors.New("Content cannot be empty")
+	if strings.TrimSpace(id) == "" {
+		return Document{}, ErrEmptyID
+	}
+	if strings.TrimSpace(title) == "" {
+		return Document{}, ErrEmptyTitle
+	}
+	if strings.TrimSpace(content) == "" {
+		return Document{}, ErrEmptyContent
 	}
 	return Document{ID: id, Title: title, Content: content}, nil
 }

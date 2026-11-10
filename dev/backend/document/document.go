@@ -21,13 +21,20 @@ func NewDocument(id, title, content string) (Document, error) {
 	if strings.TrimSpace(id) == "" {
 		return Document{}, ErrEmptyID
 	}
-	if strings.TrimSpace(title) == "" {
-		return Document{}, ErrEmptyTitle
-	}
-	if strings.TrimSpace(content) == "" {
-		return Document{}, ErrEmptyContent
+	if err := Validate(title, content); err != nil {
+		return Document{}, err
 	}
 	return Document{ID: id, Title: title, Content: content}, nil
+}
+
+func Validate(title, content string) error {
+	if strings.TrimSpace(title) == "" {
+		return ErrEmptyTitle
+	}
+	if strings.TrimSpace(content) == "" {
+		return ErrEmptyContent
+	}
+	return nil
 }
 
 func (d Document) Summary() string {

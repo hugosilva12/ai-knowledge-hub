@@ -2,15 +2,27 @@
 
 A technical documentation assistant built in Go, using RAG (Retrieval-Augmented Generation).
 
-The project is currently in its first API milestone. It exposes a health check and
-an in-memory document collection while the Go foundations are developed.
+The project currently exposes a health check and a PostgreSQL-backed document
+collection while the Go foundations are developed.
+
+## Requirements
+
+- Go 1.26.5 or later
+- Docker with Docker Compose
 
 ## Run the API
 
-Go 1.26.5 or later is required.
+Start PostgreSQL from the repository root:
+
+```bash
+docker compose up -d
+```
+
+Then start the API:
 
 ```bash
 cd dev/backend
+export DATABASE_URL='postgres://knowledge:knowledge@localhost:5432/knowledge_hub?sslmode=disable'
 go run ./cmd/server
 ```
 
@@ -26,13 +38,35 @@ curl -X POST http://localhost:8081/documents \
 curl http://localhost:8081/documents
 ```
 
-Documents are kept in memory and are lost when the server stops.
+Documents remain available after the API or PostgreSQL container restarts. Run
+`docker compose down` to stop PostgreSQL while preserving its data volume.
 
 ## Run the tests
 
 ```bash
 cd dev/backend
 go test -race ./...
+```
+
+Run the PostgreSQL integration test while Compose is running:
+
+```bash
+cd dev/backend
+TEST_DATABASE_URL='postgres://knowledge:knowledge@localhost:5432/knowledge_hub?sslmode=disable' \
+  go test -race -tags=integration ./internal/storage/postgres
+```
+
+## Migrations
+
+The Compose setup applies the initial `up` migration when it creates the database
+volume. The matching rollback is in
+`dev/backend/migrations/000001_create_documents.down.sql`.
+
+Applying that rollback drops the `documents` table and deletes its data:
+
+```bash
+docker compose exec -T postgres psql -U knowledge -d knowledge_hub \
+  < dev/backend/migrations/000001_create_documents.down.sql
 ```
 
 ## Learning examples

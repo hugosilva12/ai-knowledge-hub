@@ -10,13 +10,18 @@ import (
 	"testing"
 
 	"ai-knowledge-hub/document"
+	"ai-knowledge-hub/internal/storage"
 )
+
+func newTestHandler() http.Handler {
+	return NewServer(storage.NewMemoryStore()).Handler()
+}
 
 func TestHealth(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/health", nil)
 	response := httptest.NewRecorder()
 
-	NewServer().Handler().ServeHTTP(response, request)
+	newTestHandler().ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
@@ -27,7 +32,7 @@ func TestHealth(t *testing.T) {
 }
 
 func TestDocumentsLifecycle(t *testing.T) {
-	handler := NewServer().Handler()
+	handler := newTestHandler()
 	empty := httptest.NewRecorder()
 	handler.ServeHTTP(empty, httptest.NewRequest(http.MethodGet, "/documents", nil))
 	if empty.Code != http.StatusOK || strings.TrimSpace(empty.Body.String()) != "[]" {
@@ -71,7 +76,7 @@ func TestDocumentsLifecycle(t *testing.T) {
 
 func TestConcurrentDocumentCreationUsesUniqueIDs(t *testing.T) {
 	const total = 50
-	handler := NewServer().Handler()
+	handler := newTestHandler()
 
 	var wg sync.WaitGroup
 	statuses := make(chan int, total)
